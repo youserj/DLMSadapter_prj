@@ -1,3 +1,5 @@
+from DLMS_SPODES.cosem_interface_classes.collection import ID
+
 from .main import (
     Adapter, AdapterException,
     Collection, ParameterValue, Template,
@@ -6,6 +8,7 @@ from .xml_ import (
     Xml50, Xml40, Xml41, Xml3, xml50
 )
 from DLMS_SPODES.config_parser import get_values
+from StructResult import Result
 
 
 CREATE_TYPE = "create_type"
@@ -55,7 +58,7 @@ class Pool(Adapter):
             adp.set_collection(col)
 
     @classmethod
-    def get_collection(cls, m: bytes, f_id: ParameterValue, ver: ParameterValue) -> tuple[Collection, list[Exception]]:
+    def get_collection(cls, col_id: ID) -> Result[Collection]:
         ret = None
         for adp in _adapters[GET_COLLECTION]:
             try:

@@ -5,6 +5,7 @@ from DLMS_SPODES.cosem_interface_classes.collection import (
     ParameterValue,
     Template)
 from semver import Version as SemVer
+from StructResult import Result
 
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ class Adapter(ABC):
 
     @classmethod
     @abstractmethod
-    def get_collection(cls, col_id: ID) -> tuple[Collection, list[Exception]]:
+    def get_collection(cls, col_id: ID) -> Result[Collection]:
         """get Collection by m: manufacturer, t: type, ver: version. AdapterException if not find collection by ID """
 
     @abstractmethod
@@ -87,7 +88,7 @@ class __Gag(Adapter):
         raise AdapterException(F"{self.__class__.__name__} not support <create_template>")
 
     @classmethod
-    def get_template(cls, name: str) -> Template:
+    def get_template(cls, name: str, forced_col: Collection = None) -> Template:
         raise AdapterException(F"{cls.__name__} not support <get_template>")
 
     @classmethod
