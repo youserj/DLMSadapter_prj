@@ -5,7 +5,7 @@ from DLMS_SPODES.cosem_interface_classes.collection import (
     ParameterValue,
     Template)
 from semver import Version as SemVer
-from StructResult import Result
+from StructResult import result
 
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ class Adapter(ABC):
 
     @classmethod
     @abstractmethod
-    def get_collection(cls, col_id: ID) -> Result[Collection]:
+    def get_collection(cls, col_id: ID) -> result.Simple[Collection]:
         """get Collection by m: manufacturer, t: type, ver: version. AdapterException if not find collection by ID """
 
     @abstractmethod

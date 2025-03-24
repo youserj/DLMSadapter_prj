@@ -12,7 +12,7 @@ from DLMS_SPODES.cosem_interface_classes.collection import Collection, Parameter
 from DLMS_SPODES.cosem_interface_classes.association_ln.ver0 import ObjectListElement, AttributeAccessItem, AccessMode, is_attr_writable
 from DLMS_SPODES.cosem_interface_classes import implementations as impl, collection
 from DLMS_SPODES import exceptions as exc
-from .main import Adapter, AdapterException, Result
+from .main import Adapter, AdapterException, result
 
 logger = logging.getLogger(__name__)
 man6 = re.compile("([a-f, 0-9]{2}){3}")
@@ -126,7 +126,7 @@ class Base(Adapter, ABC):
             col=Collection(id_=col_id))
 
     @classmethod
-    def get_collection(cls, col_id: ID) -> Result[Collection]:
+    def get_collection(cls, col_id: ID) -> result.Simple[Collection]:
         """return copy of parent Collection"""
         return cls._get_collection(col_id).copy()
 
