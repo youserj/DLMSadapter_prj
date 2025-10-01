@@ -858,7 +858,8 @@ class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
             if isinstance((res1 := col.par2obj(obj_par)), result.Error):
                 return res1.with_msg("collection is wrong")
             obj = res1.value
-            parent_obj, _ = parent_col.par2obj(obj_par)
+            if isinstance(res_par_obj := parent_col.par2obj(obj_par), result.Error):
+                return res_par_obj.with_msg("parent collection is wrong")
             object_node = None
             for a_a in obj_list_el.access_rights.attribute_access:
                 if (i := int(a_a.attribute_id))==1:  # skip ln
@@ -868,7 +869,7 @@ class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
                         """skip DYNAMIC attributes"""
                     elif (attr := obj.get_attr(i)) is None:
                         """skip empty attributes"""
-                    elif parent_obj.get_attr(i) == attr:
+                    elif res_par_obj.value.get_attr(i) == attr:
                         """skip not changed attr value"""
                     else:
                         is_empty = False
