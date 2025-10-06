@@ -577,13 +577,13 @@ class Xml40(__GetCollectionIDMixin1, Base):
                         if len(attr.text) <= 2:  # set only type with default value
                             data_type = new_object.getAElement(i).unwrap().DATA_TYPE
                             if isinstance(data_type, ut.CHOICE):
-                                new_object.set(i, int(attr.text).to_bytes())
+                                new_object.set_attr(i, int(attr.text))
                             elif data_type.TAG[0] == int(attr.text):
                                 """ ordering by old"""
                             else:
                                 raise ValueError(F'Got {attr.text} attribute Tag, expected {data_type}')
                         else:  # set common value
-                            new_object.set(i, bytes.fromhex(attr.text))
+                            new_object.set_attr(i, bytes.fromhex(attr.text))
                             if (
                                 new_object.CLASS_ID == ClassID.ASSOCIATION_LN
                                 and i == 2
