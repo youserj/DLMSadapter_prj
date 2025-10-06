@@ -1,5 +1,5 @@
 from itertools import count
-from typing import override, Protocol
+from typing import override, Protocol, Optional
 import re
 import copy
 import xml.etree.ElementTree as ET
@@ -552,17 +552,16 @@ class Xml40(__GetCollectionIDMixin1, Base):
             logger.info(F'{attempts=}')
             for obj in r_n.findall("obj"):
                 ln: str = obj.attrib.get('ln', 'is absence')
-                version: str | None = obj.findtext("ver")
                 try:
                     logical_name: cst.LogicalName = cst.LogicalName.from_obis(ln)
-                    if version:  # only for AssociationLN
+                    if isinstance(version := obj.findtext("ver"), str):  # only for AssociationLN
                         new_object: AssociationLN = col.add_if_missing(
                             class_id=ClassID.ASSOCIATION_LN,
-                            version=cdt.Unsigned(version),
+                            version=cdt.Unsigned.parse(version),
                             logical_name=logical_name)
                         col.add_if_missing(  # current association with know version
                             class_id=ClassID.ASSOCIATION_LN,
-                            version=cdt.Unsigned(version),
+                            version=cdt.Unsigned.parse(version),
                             logical_name=cst.LogicalName.from_obis("0.0.40.0.0.255"))
                     else:
                         new_object = col.get_object(logical_name.contents)
@@ -576,15 +575,15 @@ class Xml40(__GetCollectionIDMixin1, Base):
                     i: int = int(attr.attrib.get("i"))
                     try:
                         if len(attr.text) <= 2:  # set only type with default value
-                            data_type = new_object.get_attr_element(i).DATA_TYPE
+                            data_type = new_object.getAElement(i).unwrap().DATA_TYPE
                             if isinstance(data_type, ut.CHOICE):
-                                new_object.set_attr(i, int(attr.text))
+                                new_object.set(i, int(attr.text).to_bytes())
                             elif data_type.TAG[0] == int(attr.text):
                                 """ ordering by old"""
                             else:
                                 raise ValueError(F'Got {attr.text} attribute Tag, expected {data_type}')
                         else:  # set common value
-                            new_object.set_attr(i, bytes.fromhex(attr.text))
+                            new_object.set(i, bytes.fromhex(attr.text))
                             if (
                                 new_object.CLASS_ID == ClassID.ASSOCIATION_LN
                                 and i == 2
@@ -929,7 +928,7 @@ class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
         )
 
     @classmethod
-    def get_template(cls, name: str, forced_col: Collection = None) -> Template:
+    def get_template(cls, name: str, forced_col: Collection = None) -> Template:  # todo: make with StructResult
         path = cls._get_template_path(name)
         r_n = ET.parse(path).getroot()
         used: collection.UsedAttributes = dict()
@@ -944,7 +943,7 @@ class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
                             man=bytes.fromhex(man_n.findtext("value")),
                             f_id=cls.node2parval(fid_n),
                             f_ver=cls.node2parval(fv_n),
-                        ))[0])
+                        )).unwrap())
                     except AdapterException as e:
                         logger.error(F"collection with: {man_n}/{fid_n}/{fv_n} not load to Template: {e}")
                         continue
