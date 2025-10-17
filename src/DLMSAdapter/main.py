@@ -20,7 +20,7 @@ class Adapter(Protocol):
     """reinit current adapter version"""
 
     @classmethod
-    def set_collection(cls, col: Collection) -> None:
+    def set_collection(cls, col: Collection) -> result.Ok | result.Error:
         """not safety of type keeping from collection(source) to destination(file(xml, json,...), sql, etc...). Save all attributes. For types only STATIC save """
 
     @classmethod
@@ -38,7 +38,7 @@ class Adapter(Protocol):
         """Save attributes WRITABLE and STATIC if possible. Use LDN as ID"""
 
     @classmethod
-    def get_data(cls, col: Collection) -> result.Ok | result.Error:
+    def get_data(cls, col: Collection) -> result.StrictOk | result.Error:
         """ set attribute values from file by. validation ID's. AdapterException if not find data by ID"""
 
     def set_template(self, template: Template) -> None:
@@ -59,7 +59,7 @@ class AdapterException(Exception):
 
 class __Gag(Adapter):
     @classmethod
-    def set_collection(cls, col: Collection) -> None:
+    def set_collection(cls, col: Collection) -> result.Ok | result.Error:
         raise AdapterException(F"{cls.__name__} not support <get_template>")
 
     @classmethod
