@@ -241,6 +241,59 @@ class __SetTemplateMixin1(Base, Protocol):
             path=self._get_template_path(template.name),
             template=template)
 
+class __SetTemplateMixin2(Base, Protocol):
+    @staticmethod
+    def temp2root(r_n: ET.Element,
+                  path: Path,
+                  template: Template):
+        used_copy = copy.deepcopy(template.used)
+        r_n.attrib["decode"] = "1"
+        if template.verified:
+            r_n.attrib["verified"] = "1"
+        for col in template.collections:
+            for ln, indexes in copy.copy(used_copy).items():
+                try:
+                    obj = col.get_object(ln)
+                    object_node = ET.SubElement(
+                        r_n,
+                        "object",
+                        attrib={"ln": obj.logical_name.get_report().msg})
+                    for i in tuple(indexes):
+                        attr = obj.get_attr(i)
+                        if isinstance(attr, cdt.CommonDataType):
+                            ET.SubElement(
+                                object_node,
+                                "attr",
+                                {"index": str(i)}).text = attr.encoding.hex()
+                            indexes.remove(i)
+                        else:
+                            logger.error(F"skip record {obj}:attr={i} with value={attr}")
+                    if len(indexes) == 0:
+                        used_copy.pop(ln)
+                except exc.NoObject as e:
+                    logger.warning(F"skip obj with {ln=} in {template.collections.index(col)} collection: {e}")
+                    continue
+            if len(used_copy) == 0:
+                logger.info(F"success decoding: used {template.collections.index(col) + 1} from {len(template.collections)} collections")
+                break
+        if len(used_copy) != 0:
+            raise ValueError(F"failed decoding: {used_copy}")
+        with open(path, mode="wb") as f:
+            f.write(ET.tostring(
+                element=r_n,
+                encoding="utf-8",
+                method="xml",
+                xml_declaration=True))
+
+    @classmethod
+    def _get_template_root_node(cls, collections: list[Collection]) -> ET.Element:
+        """create and return root node with header"""
+
+    def set_template(self, template: Template):
+        self.temp2root(
+            r_n=self._get_template_root_node(collections=template.collections),
+            path=self._get_template_path(template.name),
+            template=template)
 
 class Xml3(__GetCollectionIDMixin1, Base):
     VERSION: SemVer = SemVer(3, 2)
@@ -819,7 +872,7 @@ class Xml41(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
             verified=bool(int(r_n.findtext("verified", default="0"))))
 
 
-class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
+class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin2, Base):
     """"""
     VERSION = SemVer(5, 0)
     TYPE_ROOT_TAG = "DLMSServerType"
@@ -967,24 +1020,8 @@ class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
                 index: int = int(attr.attrib.get("index"))
                 used[obis].add(index)
                 try:
-                    match attr.attrib.get("type", "simple"):
-                        case "simple":
-                            for new_object in objs:
-                                new_object.set_attr(index, attr.text)
-                        case "array" | "struct":
-                            stack = [(list(), iter(attr))]
-                            while stack:
-                                v1, v2 = stack[-1]
-                                v = next(v2, None)
-                                if v is None:
-                                    stack.pop()
-                                elif v.tag == "simple":
-                                    v1.append(v.text)
-                                else:
-                                    v1.append(list())
-                                    stack.append((v1[-1], iter(v)))
-                            for new_object in objs:
-                                new_object.parse_attr(index, v1)
+                    for new_object in objs:
+                        new_object.set_attr(index, bytes.fromhex(attr.text))
                 except exc.ITEApplication as e:
                     logger.error(F"Can't fill {new_object} attr: {index}. {e}")
                 except IndexError:
