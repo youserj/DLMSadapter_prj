@@ -1,4 +1,5 @@
 from itertools import count
+import hashlib
 from typing import override, Protocol, Optional, Iterator
 import re
 import copy
@@ -37,6 +38,10 @@ if not KEEP_PATH.exists():
     KEEP_PATH.mkdir()
 if not TEMPLATE_PATH.exists():
     TEMPLATE_PATH.mkdir()
+
+
+def colID2path(col_id: collection.ID) -> Path:
+    return types_path / f"{hashlib.md5(bytes(col_id)).hexdigest()}.xml"
 
 
 type Manufacturer = bytes
@@ -724,7 +729,7 @@ class Xml41(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
 
     @classmethod
     def root2data(cls, r_n: ET.Element, col: Collection):
-        if not cls._is_header(r_n, Xml41.DATA_ROOT_TAG, Xml41.VERSION):
+        if not cls._is_header(r_n, cls.DATA_ROOT_TAG, cls.VERSION):
             return Xml40.root2data(r_n, col)
         cls.set_parameters(r_n, col)
         Xml40._fill_data40(r_n, col)
@@ -761,7 +766,7 @@ class Xml41(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
         cols = list()
         tree = ET.parse(path)
         r_n = tree.getroot()
-        if not cls._is_header(r_n, Xml41.TEMPLATE_ROOT_TAG, Xml41.VERSION):
+        if not cls._is_header(r_n, cls.TEMPLATE_ROOT_TAG, cls.VERSION):
             raise AdapterException(F"Unknown tag: {r_n.tag} with {r_n.attrib}")
         for man_n in r_n.findall("manufacturer"):
             for fid_n in man_n.findall("server_type"):
@@ -836,21 +841,22 @@ class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
     TEMPLATE_ROOT_TAG: str = "DLMSServerTemplate"
 
     @classmethod
-    def root2data(cls, r_n: ET.Element, col: Collection):
+    def root2data(cls, r_n: ET.Element, col: Collection) -> result.StrictOk | result.Error:
         if not cls._is_header(r_n, cls.DATA_ROOT_TAG, cls.VERSION):
-            return Xml41.root2data(r_n, col)
-        cls.set_parameters(r_n, col)
+            return super().root2data(r_n, col)
+        if isinstance(res_set := cls.set_parameters(r_n, col), result.Error):
+            return res_set
         Xml40._fill_data40(r_n, col)
 
     @classmethod
     def root2collection(cls, r_n: ET.Element, col: Collection) -> result.SimpleOrError[Collection]:
         if not cls._is_header(r_n, cls.TYPE_ROOT_TAG, cls.VERSION):
             return super().root2collection(r_n, col)
-        cls.set_parameters(r_n, col)
-        if isinstance(res_fill := cls._fill_collection(r_n, col), result.Error):
-            return res_fill
+        if isinstance(res_set := cls.set_parameters(r_n, col), result.Error):
+            return res_set
         res = result.Simple(col)
-        res.propagate_err(res_fill)
+        if isinstance(res_fill := res.merge_err(cls._fill_collection(r_n, col)), result.Error):
+            return res_fill
         return res
 
     @classmethod
@@ -1015,7 +1021,7 @@ class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
             verified=bool(int(r_n.findtext("verified", default="0"))))
 
     @classmethod
-    def set_parameters(cls, r_n: ET.Element, col: Collection):
+    def set_parameters(cls, r_n: ET.Element, col: Collection) -> result.Ok | result.Error:
         try:
             if (dlms_ver := r_n.findtext("dlms_ver")) is not None:
                 col.set_dlms_ver(int(dlms_ver))
@@ -1131,6 +1137,27 @@ class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
         return ret
 
 
+def attrData2node(parent: ET.Element, tag: str, value: collection.AttrData) -> ET.Element:
+    new = ET.SubElement(parent, tag)
+    ET.SubElement(new, "attr").text = value.attr.hex()
+    ET.SubElement(new, "data").text = value.data.hex()
+    return new
+
+
+def node2attrData(node: ET.Element) -> result.SimpleOrError[collection.AttrData]:
+    if (attr_text := node.findtext("attr")) is None:
+        return result.Error.from_e(AttributeError("not find <attr> in node"))
+    if (data_text := node.findtext("data")) is None:
+        return result.Error.from_e(AttributeError("not find <data> in node"))
+    try:
+        return result.Simple(collection.AttrData(
+            attr=bytes.fromhex(attr_text),
+            data=bytes.fromhex(data_text)
+        ))
+    except ValueError as e:
+        return result.Error.from_e(e, msg="node hex decode error")
+
+
 class Xml60(Xml50):
     """"""
     VERSION = SemVer(6, 0)
@@ -1140,12 +1167,12 @@ class Xml60(Xml50):
         if col.country is not None:
             ET.SubElement(r_n, "country").text = str(col.country.value)
             if col.country_ver:
-                cls.parval2node(r_n, "country_ver", col.country_ver)
+                attrData2node(r_n, "country_ver", col.country_ver)
         ET.SubElement(r_n, "manufacturer").text = col.id.man.hex()
         ET.SubElement(r_n, "SAP").text = str(col.id.sap)
         ET.SubElement(r_n, "association_ver").text = str(col.find_version(class_id.ASSOCIATION_LN))
-        cls.parval2node(r_n, "firm_id", col.id.f_id)
-        cls.parval2node(r_n, "firm_ver", col.id.f_ver)
+        attrData2node(r_n, "firm_id", col.id.f_id)
+        attrData2node(r_n, "firm_ver", col.id.f_ver)
         return r_n
 
     @classmethod
@@ -1160,89 +1187,68 @@ class Xml60(Xml50):
                 ET.SubElement(root_node, "tag", attrib={"attr": attr.hex()}).text = str(data[0])
         # TODO: '<!DOCTYPE ITE_util_tree SYSTEM "setting.dtd"> or xsd
         xml_string = ET.tostring(root_node, encoding="utf-8", method='xml')
-        if not (man_path := types_path / col.id.man.hex()).exists():
-            man_path.mkdir()
-        if not (type_path := man_path / bytes(col.id.f_id).hex()).exists():
-            type_path.mkdir()
-        ver_path = type_path / f"{col.id.sap.contents.hex()}{bytes(col.id.f_ver).hex()}.xml"
-        with open(ver_path, "wb") as f:
+        with open(colID2path(col.id), "wb") as f:
             f.write(xml_string)
-            cls.get_manufactures_container.cache_clear()
             cls._get_collection.cache_clear()
         return result.OK
 
     @classmethod
-    def set_parameters(cls, r_n: ET.Element, col: Collection):
-        try:
-            if (dlms_ver := r_n.findtext("dlms_ver")) is not None:
-                col.set_dlms_ver(int(dlms_ver))
-            if (country := r_n.findtext("country")) is not None:
-                col.set_country(collection.CountrySpecificIdentifiers(int(country)))
-            if (country_ver_el := r_n.find("country_ver")) is not None:
-                col.set_country_ver(cls.node2parval(country_ver_el))
-            if all((
-                manufacturer := r_n.findtext("manufacturer"),
-                sap := r_n.findtext("SAP"),
-                firm_id_el := r_n.find("firm_id"),
-                firm_ver_el := r_n.find("firm_ver")
-            )):
-                col.set_id(collection.ID(
-                    man=bytes.fromhex(manufacturer),
-                    f_id=cls.node2parval(firm_id_el),
-                    f_ver=cls.node2parval(firm_ver_el),
-                    sap=ClientSAP.parse(sap)
-                ))
-        except ValueError as e:
-            raise AdapterException(F"can't set all parameters to collection: {e}")
-        col.spec_map = col.get_spec()
+    def node2ID(cls, r_n: ET.Element) -> result.SimpleOrError[collection.ID]:
+        if all((
+            manufacturer := r_n.findtext("manufacturer"),
+            sap := r_n.findtext("SAP"),
+            firm_id_el := r_n.find("firm_id"),
+            firm_ver_el := r_n.find("firm_ver")
+        )):
+            if isinstance(res_attr_data_id := node2attrData(firm_id_el), result.Error):
+                return res_attr_data_id
+            if isinstance(res_attr_data_ver := node2attrData(firm_ver_el), result.Error):
+                return res_attr_data_ver
+            return result.Simple(collection.ID(
+                man=bytes.fromhex(manufacturer),
+                f_id=res_attr_data_id.value,
+                f_ver=res_attr_data_ver.value,
+                sap=ClientSAP.parse(sap)
+            ))
+        return result.Error.from_e(ValueError("not find collection type"))
 
     @classmethod
-    @lru_cache(1)
-    def get_manufactures_container(cls) -> dict[Manufacturer, dict[FirmwareId, dict[FirmwareVer, tuple[int, Path]]]]:
-        logger.info(F"use manufacturer configuration system {cls.__name__}")
-        ret = {}
+    def set_parameters(cls, r_n: ET.Element, col: Collection) -> result.Ok | result.Error:
+        if (dlms_ver := r_n.findtext("dlms_ver")) is not None:
+            if isinstance(res_set_dlms_ver := col.set_dlms_ver(int(dlms_ver)), result.Error):
+                return res_set_dlms_ver
+        if (country := r_n.findtext("country")) is not None:
+            if isinstance(res_set_country := col.set_country(collection.CountrySpecificIdentifiers(int(country))), result.Error):
+                return res_set_country
+            if (country_ver_el := r_n.find("country_ver")) is not None:
+                if isinstance(res_attr_data := node2attrData(country_ver_el), result.Error):
+                    return res_attr_data
+                if isinstance(res_set_country_ver := col.set_country_ver(res_attr_data.value), result.Error):
+                    return res_set_country_ver
+        if isinstance(res_ID := cls.node2ID(r_n), result.Error):
+            return res_ID
+        col.set_id(res_ID.value)
+        col.spec_map = col.get_spec()
+        return result.OK
+
+    @classmethod
+    def getIDs(cls) -> result.List[collection.ID]:
+        res = result.List()
         for m_path in types_path.iterdir():
-            if m_path.is_dir():
-                if man6.fullmatch(m_path.name) is not None:
-                    man = bytes.fromhex(m_path.name)
-                else:
-                    logger.warning(F"skip <{m_path}>: not recognized like manufacturer")
-                    continue
-                ret[man] = {}
-                for fid in m_path.iterdir():
-                    if (
-                        fid.is_dir()
-                        and hex_.fullmatch(fid.name)
-                    ):
-                        ret[man][firm_id := bytes.fromhex(fid.name)] = {}
-                        for sap_ver_path in fid.iterdir():
-                            sap_ver = sap_ver_path.stem
-                            if (
-                                sap_ver_path.is_file()
-                                and sap_ver_path.suffix == ".xml"
-                                and hex_.fullmatch(sap_ver)
-                            ):
-                                sap, ver = sap_ver[:2], sap_ver[2:]
-                                ret[man][firm_id][bytes.fromhex(ver)] = (ClientSAP(bytearray.fromhex(sap)), sap_ver_path)
-        return ret
+            tree = ET.parse(m_path)
+            r_n = tree.getroot()
+            if not cls._is_header(r_n, cls.TYPE_ROOT_TAG, cls.VERSION):
+                res.append_e(ValueError(F"{m_path} is not type"))  # todo: make from other version
+            res.append(cls.node2ID(r_n))
+        return res
 
     @classmethod
     @lru_cache(maxsize=100)
     def get_col_path(cls,  col_id: ID) -> result.Simple[Path] | result.Error:
         """ret: file, is_searched"""
-        if (man := cls.get_manufactures_container().get(col_id.man)) is None:
-            return result.Error.from_e(AdapterException(F"no support manufacturer: {col_id.man!r}"))
-        elif (firm_id := man.get(bytes(col_id.f_id))) is None:
-            return result.Error.from_e(AdapterException(F"no support type {col_id.f_id}, with manufacturer: {col_id.man}"))
-        elif (sap_path := firm_id.get(bytes(col_id.f_ver))) is not None:
-            sap, path = sap_path
-            if sap == col_id.sap:
-                logger.info(F"got collection from library by {path=}")
-                return result.Simple(path)
-            else:
-                return result.Error.from_e(AdapterException(F"no find for {sap=} with: version {col_id.f_ver}, manufacturer: {col_id.man}, identifier: {col_id.f_id}"))
-        else:
-            return result.Error.from_e(AdapterException(F"no support version {col_id.f_ver} with manufacturer: {col_id.man}, identifier: {col_id.f_id}"))
+        if (path := colID2path(col_id)).is_file():
+            return result.Simple(path)
+        return result.Error.from_e(ValueError(f"no support {col_id=}"))
 
     @staticmethod
     def _fill_collection(r_n: ET.Element, col: Collection) -> result.StrictOk | result.Error:
@@ -1274,8 +1280,6 @@ class Xml60(Xml50):
         return res
 
 
-xml3 = Xml3()
-xml4 = Xml40()
 xml41 = Xml41()
 xml50 = Xml50()
 xml60 = Xml60()
