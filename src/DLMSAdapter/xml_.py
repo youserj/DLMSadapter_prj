@@ -7,7 +7,7 @@ import xml.etree.ElementTree as ET
 from functools import lru_cache
 from pathlib import Path
 import logging
-from DLMS_SPODES.types.implementations.enums import ClientSAP
+from DLMS_SPODES.cosem_interface_classes.association_ln import client_sap
 from semver import Version as SemVer
 from StructResult import result
 from DLMS_SPODES.types.type_alias import Obis, ln2obis, pack_attr, Index, Tag, unpack_attr, attr2obis
@@ -1038,7 +1038,7 @@ class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
                     man=bytes.fromhex(manufacturer),
                     f_id=cls.node2parval(firm_id_el),
                     f_ver=cls.node2parval(firm_ver_el),
-                    sap=ClientSAP(0x30)  # only for Configurator
+                    sap=client_sap.CONFIGURATOR  # only for Configurator
                 ))
         except ValueError as e:
             raise AdapterException(F"can't set all parameters to collection: {e}")
@@ -1208,7 +1208,7 @@ class Xml60(Xml50):
                 man=bytes.fromhex(manufacturer),
                 f_id=res_attr_data_id.value,
                 f_ver=res_attr_data_ver.value,
-                sap=ClientSAP.parse(sap)
+                sap=client_sap.ClientSAP.parse(sap)
             ))
         return result.Error.from_e(ValueError("not find collection type"))
 

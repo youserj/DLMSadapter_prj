@@ -37,7 +37,9 @@ DLMS_SPODES_client = "DLMS_SPODES_client:call_script"
 dev = [
     "mypy>=1.5.0",
     "ruff>=0.11",
-    "types-requests"
+    "types-requests",
+    "build",
+    "twine"
 ]
 
 [tool.mypy]
