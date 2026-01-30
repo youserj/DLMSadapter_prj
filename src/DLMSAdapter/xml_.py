@@ -984,8 +984,8 @@ class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin2, Base):
     def get_template(cls, name: str, forced_col: Collection = None) -> Template:  # todo: make with StructResult
         path = cls._get_template_path(name)
         r_n = ET.parse(path).getroot()
-        used: collection.UsedAttributes = dict()
-        cols = list()
+        used: collection.UsedAttributes = {}
+        cols = []
         if not cls._is_header(r_n, Xml50.TEMPLATE_ROOT_TAG, Xml50.VERSION):
             return xml41.get_template(name)
         for man_n in r_n.findall("manufacturer"):
@@ -1006,32 +1006,29 @@ class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin2, Base):
                 logger.warning(F"add forced collection: {forced_col}")
             else:
                 raise AdapterException("no one collection find")
-        for obj in r_n.findall('object'):
-            ln: str = obj.attrib.get("ln", 'is absence')
-            obis = cst.LogicalName.from_obis(ln)
-            objs: list[ic.COSEMInterfaceClasses] = list()
+        for obj_el in r_n.findall('object'):
+            ln = cst.LogicalName.from_obis(obj_el.attrib.get("ln"))
+            used[ln] = set()
             for col in cols:
-                if not col.is_in_collection(obis):
+                if not col.is_in_collection(ln):
                     logger.warning(F"got object with {ln=} not find in collection: {col}")
                 else:
-                    objs.append(col.get_object(obis))
-            used[obis] = set()
-            for attr in obj.findall("attr"):
-                index: int = int(attr.attrib.get("index"))
-                used[obis].add(index)
-                try:
-                    for new_object in objs:
-                        new_object.set_attr(index, bytes.fromhex(attr.text))
-                except exc.ITEApplication as e:
-                    logger.error(F"Can't fill {new_object} attr: {index}. {e}")
-                except IndexError:
-                    logger.error(F'Object "{new_object}" not has attr: {index}')
-                except TypeError as e:
-                    logger.error(F'Object {new_object} attr:{index} do not write, encoding wrong : {e}')
-                except ValueError as e:
-                    logger.error(F'Object {new_object} attr:{index} do not fill: {e}')
-                except AttributeError as e:
-                    logger.error(F'Object {new_object} attr:{index} do not fill: {e}')
+                    obj = col.get_object(ln)
+                for attr in obj_el.findall("attr"):
+                    i = int(attr.attrib.get("index"))
+                    try:
+                        obj.set_attr(i, bytes.fromhex(attr.text))
+                        used[ln].add(i)
+                    except exc.ITEApplication as e:
+                        logger.error(F"Can't fill {obj} attr: {i}. {e}")
+                    except IndexError:
+                        logger.error(F'Object "{obj}" not has attr: {i}')
+                    except TypeError as e:
+                        logger.error(F'Object {obj} attr:{i} do not write, encoding wrong : {e}')
+                    except ValueError as e:
+                        logger.error(F'Object {obj} attr:{i} do not fill: {e}')
+                    except AttributeError as e:
+                        logger.error(F'Object {obj} attr:{i} do not fill: {e}')
         return Template(
             name=name,
             collections=cols,
