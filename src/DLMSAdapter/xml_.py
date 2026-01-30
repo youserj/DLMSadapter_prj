@@ -10,16 +10,18 @@ import logging
 from DLMS_SPODES.cosem_interface_classes.association_ln import client_sap
 from semver import Version as SemVer
 from StructResult import result
-from DLMS_SPODES.types.type_alias import Obis, ln2obis, pack_attr, Index, Tag, unpack_attr, attr2obis
+from DLMS_SPODES.types.implementations import octet_string
+from DLMS_SPODES.types.type_alias import Obis, ln2obis, pack_attr, Index, Tag, unpack_attr, attr2obis, obis2ln, Attr
 from DLMS_SPODES.cosem_interface_classes.parameter import Parameter
 from DLMS_SPODES.types import cst, cdt, ut
 from DLMS_SPODES.cosem_interface_classes.obis import OBIS
 from DLMS_SPODES.cosem_interface_classes.Overview import class_id
-from DLMS_SPODES.cosem_interface_classes.collection import Collection, ParameterValue, AssociationLN, Template, ID
-from DLMS_SPODES.cosem_interface_classes.association_ln.ver0 import ObjectListElement, AttributeAccessItem, AccessMode, is_attr_writable, ObjectListType
+from DLMS_SPODES.cosem_interface_classes.collection import Collection, AssociationLN, Template, ID, AttrData
+from DLMS_SPODES.cosem_interface_classes.association_ln.ver0 import ObjectListElement, AttributeAccessItem, AccessMode
 from DLMS_SPODES.cosem_interface_classes import implementations as impl, collection, ic
 from DLMS_SPODES.cosem_interface_classes.association_ln.abstract import ObjectListType
 from DLMS_SPODES import exceptions as exc
+from DLMS_SPODES_client.client import Client
 from .main import Adapter, AdapterException
 
 logger = logging.getLogger(__name__)
@@ -54,9 +56,7 @@ class Base(Adapter, Protocol):
     VERSION: SemVer
 
     @staticmethod
-    def _get_keep_path(col: Collection) -> Path:
-        if (ldn := col.LDN.value) is None:
-            raise exc.EmptyObj(F"No LDN value in collection")
+    def _get_keep_path(ldn: Optional[octet_string.LDN]) -> Path:
         return (KEEP_PATH / ldn.contents.hex()).with_suffix(".xml")
 
     @staticmethod
@@ -72,14 +72,12 @@ class Base(Adapter, Protocol):
         """create xml root node and fill header(parameters)"""
 
     @classmethod
-    def get_data(cls, col: Collection) -> result.StrictOk | result.Error:
-        path = cls._get_keep_path(col)
-        logger.info(F"find data {path=}")
+    def get_data(cls, c: Client) -> result.StrictOk | result.Error:
         try:
-            tree = ET.parse(path)
+            tree = ET.parse(cls._get_keep_path(c.ldn))
         except FileNotFoundError as e:
-            return result.Error.from_e(e, f"AdapterXML")
-        return cls.root2data(r_n=tree.getroot(), col=col)
+            return result.Error.from_e(e, msg=f"AdapterXML")
+        return cls.root2data(r_n=tree.getroot(), c=c)
 
     @classmethod
     def _is_header(cls, r_n: ET.Element, tag: str, ver: SemVer) -> bool:
@@ -94,7 +92,7 @@ class Base(Adapter, Protocol):
         """set or validate DLMS_VER, COUNTRY, COUNTRY_VER, MANUFACTURER, SAP, SERVER_ID, SERVER_VER with xml"""
 
     @classmethod
-    def root2data(cls, r_n: ET.Element, col: Collection) -> result.StrictOk | result.Error:
+    def root2data(cls, r_n: ET.Element, c: Client) -> result.StrictOk | result.Error:
         """fill collection data by r_n"""
 
     @classmethod
@@ -145,22 +143,22 @@ class __GetCollectionIDMixin1(Base, Protocol):
                 for f_ver in f_id_v.keys():
                     ret.append(collection.ID(
                         man=m_k,
-                        f_id=ParameterValue.parse(f_id_k),
-                        f_ver=ParameterValue.parse(f_ver)
+                        f_id=AttrData.parse(f_id_k),
+                        f_ver=AttrData.parse(f_ver)
                     ))
         return ret
 
-    def get_ID_tree(self) -> dict[Manufacturer, dict[ParameterValue, set[ID]]]:
-        ret: dict[Manufacturer, dict[ParameterValue, set[ID]]] = {}
+    def get_ID_tree(self) -> dict[Manufacturer, dict[AttrData, set[ID]]]:
+        ret: dict[Manufacturer, dict[AttrData, set[ID]]] = {}
         for m_k, m_v in self.get_manufactures_container().items():
             ret[m_k] = dict()
             for f_id_k, f_id_v in m_v.items():
-                ret[m_k][id_ := ParameterValue.parse(f_id_k)] = set()
+                ret[m_k][id_ := AttrData.parse(f_id_k)] = set()
                 for f_ver in f_id_v.keys():
                     ret[m_k][id_].add(collection.ID(
                         man=m_k,
-                        f_id=ParameterValue.parse(f_id_k),
-                        f_ver=ParameterValue.parse(f_ver)
+                        f_id=AttrData.parse(f_id_k),
+                        f_ver=AttrData.parse(f_ver)
                     ))
         return ret
 
@@ -268,7 +266,7 @@ class Xml3(__GetCollectionIDMixin1, Base):
         raise AdapterException(F"not support <create_type> for {cls.VERSION}")
 
     @classmethod
-    def set_data(cls, col: Collection, ass_id: int = 3) -> result.List[Parameter] | result.Error:
+    def set_data(cls, c: Client) -> result.List[Attr] | result.Error:
         raise AdapterException(F"not support <keep_data> for {cls.VERSION}")
 
     @classmethod
@@ -288,63 +286,30 @@ class Xml3(__GetCollectionIDMixin1, Base):
         if (country := r_n.findtext("country")) is not None:
             col.set_country(collection.CountrySpecificIdentifiers(int(country)))
         if (country_ver := r_n.findtext("country_ver")) is not None:
-            col.set_country_ver(ParameterValue(
-                par=b'\x00\x00\x60\x01\x06\xff\x02',  # 0.0.96.1.6.255:2
-                value=cdt.OctetString(bytearray(country_ver.encode(encoding="ascii"))).encoding
+            col.set_country_ver(AttrData(
+                attr=b"\x00\x00\x60\x01\x06\xff\x02",  # 0.0.96.1.6.255:2
+                data=cdt.OctetString(bytearray(country_ver.encode(encoding="ascii"))).encoding
             ))
         if all((
                 manufacturer := r_n.findtext("manufacturer"),
                 firm_id := r_n.findtext("server_type"),
                 firm_ver := r_n.findtext("server_ver")
         )):
-            col.set_id(collection.ID(
+            col.validate_id(collection.ID(
                 man=manufacturer.encode("utf-8"),
-                f_id=ParameterValue(
-                    par=b'\x00\x00\x60\x01\x01\xff\x02',
-                    value=bytes.fromhex(firm_id)),
-                f_ver=ParameterValue(
-                    par=b'\x00\x00\x00\x02\x01\xff\x02',
-                    value=firm_ver.encode(encoding="ascii"))
+                f_id=AttrData(
+                    attr=b'\x00\x00\x60\x01\x01\xff\x02',
+                    data=bytes.fromhex(firm_id)),
+                f_ver=AttrData(
+                    attr=b'\x00\x00\x00\x02\x01\xff\x02',
+                    data=firm_ver.encode(encoding="ascii"))
             ))
         col.spec_map = col.get_spec()
 
     @classmethod
-    def root2data(cls, r_n: ET.Element, col: Collection) -> result.StrictOk | result.Error:
-        if not cls._is_header(r_n, Xml3.TYPE_ROOT_TAG, Xml3.VERSION):
-            return result.Error.from_e(AdapterException(F"Unknown tag: {r_n.tag} with {r_n.attrib}"))
-        cls.set_parameters(r_n, col)
-        for obj in r_n.findall("object"):
-            ln: str = obj.attrib.get('ln', 'is absence')
-            logical_name: cst.LogicalName = cst.LogicalName.from_obis(ln)
-            if not col.is_in_collection(logical_name):
-                logger.error(F"got object with {ln=} not find in collection. Skip it attribute values")
-                continue
-            else:
-                new_object = col.get_object(logical_name)
-            indexes: list[int] = list()
-            """ got attributes indexes for current object """
-            for attr in obj.findall('attribute'):
-                index: str = attr.attrib.get('index')
-                if index.isdigit():
-                    indexes.append(int(index))
-                else:
-                    raise ValueError(F'ERROR: for obj with {ln=} got index {index} and it is not digital')
-                try:
-                    new_object.set_attr(indexes[-1], bytes.fromhex(attr.text))
-                except exc.NoObject as e:
-                    logger.error(F"Can't fill {new_object} attr: {indexes[-1]}. Skip. {e}.")
-                    break
-                except exc.ITEApplication as e:
-                    logger.error(F"Can't fill {new_object} attr: {indexes[-1]}. {e}")
-                except IndexError:
-                    logger.error(F'Object "{new_object}" not has attr: {index}')
-                except TypeError as e:
-                    logger.error(F'Object {new_object} attr:{index} do not write, encoding wrong : {e}')
-                except ValueError as e:
-                    logger.error(F'Object {new_object} attr:{index} do not fill: {e}')
-                except AttributeError as e:
-                    logger.error(F'Object {new_object} attr:{index} do not fill: {e}')
-
+    def root2data(cls, r_n: ET.Element, c: Client) -> result.StrictOk | result.Error:
+        raise AdapterException(F"{cls.__name__} not support <root2data>")
+    
     @classmethod
     def root2collection(cls, r_n: ET.Element, col: Collection) -> result.SimpleOrError[Collection]:
         if not Xml3._is_header(r_n, Xml3.TYPE_ROOT_TAG, Xml3.VERSION):
@@ -499,7 +464,7 @@ class Xml40(__GetCollectionIDMixin1, Base):
         Xml3.set_collection(col)
 
     @classmethod
-    def set_data(cls, col: Collection, ass_id: int = 3) -> result.List[Parameter] | result.Error:
+    def set_data(cls, c: Client) -> result.List[Attr] | result.Error:
         return Xml3.set_data(col)
 
     def set_template(self, template: Template):
@@ -510,38 +475,33 @@ class Xml40(__GetCollectionIDMixin1, Base):
         return Xml3.get_template(name)
 
     @classmethod
-    def root2data(cls, r_n: ET.Element, col: Collection):
+    def root2data(cls, r_n: ET.Element, c: Client) -> result.StrictOk | result.Error:
         if not cls._is_header(r_n, Xml40.DATA_ROOT_TAG, Xml40.VERSION):
-            return Xml3.root2data(r_n, col)
-        cls.set_parameters(r_n, col)
-        cls._fill_data40(r_n, col)
+            return result.Error.from_e(ValueError("can't header"))
+        cls.set_parameters(r_n, c.collection)
+        return cls._fill_data40(r_n, c)
 
     @classmethod
-    def _fill_data40(cls, r_n: ET.Element, col: Collection):
+    def _fill_data40(cls, r_n: ET.Element, c: Client) -> result.StrictOk | result.Error:
+        res = result.StrictOk()
         for obj_el in r_n.findall("object"):
             ln: str = obj_el.attrib.get("ln", 'is absence')
-            logical_name: cst.LogicalName = cst.LogicalName.from_obis(ln)
-            if not col.is_in_collection(logical_name):
-                raise ValueError(F"got object with {ln=} not find in collection. Abort attribute setting")
-            else:
-                obj = col.get_object(logical_name)
-                for attr_el in obj_el.findall("attr"):
-                    index: int = int(attr_el.attrib.get("index"))
-                    try:
-                        obj.set_attr(index, bytes.fromhex(attr_el.text))
-                    except exc.NoObject as e:
-                        logger.error(F"Can't fill {obj} attr: {index}. Skip. {e}.")
-                        break
-                    except exc.ITEApplication as e:
-                        logger.error(F"Can't fill {obj} attr: {index}. {e}")
-                    except IndexError:
-                        logger.error(F'Object "{obj}" not has attr: {index}')
-                    except TypeError as e:
-                        logger.error(F'Object {obj} attr:{index} do not write, encoding wrong : {e}')
-                    except ValueError as e:
-                        logger.error(F'Object {obj} attr:{index} do not fill: {e}')
-                    except AttributeError as e:
-                        logger.error(F'Object {obj} attr:{index} do not fill: {e}')
+            if isinstance(r_obis := ln2obis(ln), result.Error):
+                res.append_err(r_obis)
+                continue
+            for attr_el in obj_el.findall("attr"):
+                i: int = int(attr_el.attrib.get("index"))
+                try:
+                    data = bytes.fromhex(attr_el.text)
+                except ValueError as e:
+                    res.append_e(e)
+                    continue
+                c.encodings[attr := pack_attr(r_obis.value, i)] = data
+                if isinstance(r_check := c.getCDT(attr), result.Error):
+                    res.append_err(r_check)
+                    c.encodings.pop(attr)
+                    continue
+        return res
 
     @staticmethod
     def _fill_collection(r_n: ET.Element, col: Collection) -> result.StrictOk | result.Error:
@@ -683,7 +643,7 @@ class Xml41(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
                 for access in obj_el.access_rights.attribute_access[1:]:  # without ln
                     if not access.access_mode.is_writable() and access.access_mode.is_readable():
                         objs[obj_el.logical_name].add(int(access.attribute_id))
-        o2 = list()
+        o2 = []
         """container sort by AssociationLN first"""
         for ln in objs.keys():
             obj = col.get_object(ln)
@@ -724,11 +684,11 @@ class Xml41(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
             cls.get_manufactures_container.cache_clear()
 
     @classmethod
-    def set_data(cls, col: Collection, ass_id: int = 3) -> result.List[Parameter] | result.Error:
+    def set_data(cls, c: Client) -> result.List[Attr] | result.Error:
         raise AdapterException(F"not support <keep_data> for {cls.VERSION}")
 
     @classmethod
-    def root2data(cls, r_n: ET.Element, col: Collection):
+    def root2data(cls, r_n: ET.Element, col: Collection) -> result.StrictOk | result.Error:
         if not cls._is_header(r_n, cls.DATA_ROOT_TAG, cls.VERSION):
             return Xml40.root2data(r_n, col)
         cls.set_parameters(r_n, col)
@@ -774,12 +734,12 @@ class Xml41(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
                     try:
                         cols.append(cls.get_collection(collection.ID(
                             man=man_n.text.encode("utf-8"),
-                            f_id=ParameterValue(
-                                par=b'\x00\x00\x60\x01\x01\xff\x02',
-                                value=bytes.fromhex(fid_n.text)),
-                            f_ver=ParameterValue(
-                                par=b'\x00\x00\x00\x02\x00\xff\x02',
-                                value=cdt.OctetString(bytearray(fv_n.text.encode(encoding="ascii"))).encoding)
+                            f_id=AttrData(
+                                attr=b'\x00\x00\x60\x01\x01\xff\x02',
+                                data=bytes.fromhex(fid_n.text)),
+                            f_ver=AttrData(
+                                attr=b'\x00\x00\x00\x02\x00\xff\x02',
+                                data=cdt.OctetString(bytearray(fv_n.text.encode(encoding="ascii"))).encoding)
                         ))[0])
                     except AdapterException as e:
                         logger.error(F"collection with: {man_n}/{fid_n}/{fv_n} not load to Template: {e}")
@@ -841,12 +801,12 @@ class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
     TEMPLATE_ROOT_TAG: str = "DLMSServerTemplate"
 
     @classmethod
-    def root2data(cls, r_n: ET.Element, col: Collection) -> result.StrictOk | result.Error:
+    def root2data(cls, r_n: ET.Element, c: Client) -> result.StrictOk | result.Error:
         if not cls._is_header(r_n, cls.DATA_ROOT_TAG, cls.VERSION):
-            return super().root2data(r_n, col)
-        if isinstance(res_set := cls.set_parameters(r_n, col), result.Error):
+            return super().root2data(r_n, c.collection)
+        if isinstance(res_set := cls.set_parameters(r_n, c.collection), result.Error):
             return res_set
-        Xml40._fill_data40(r_n, col)
+        return Xml40._fill_data40(r_n, c)
 
     @classmethod
     def root2collection(cls, r_n: ET.Element, col: Collection) -> result.SimpleOrError[Collection]:
@@ -860,51 +820,46 @@ class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
         return res
 
     @classmethod
-    def set_data(cls, col: Collection, ass_id: int = 3) -> result.List[Parameter] | result.Error:
-        if (obj_list := col.getASSOCIATION(ass_id).object_list) is None:
-            return result.Error.from_e(exc.EmptyObj(F"Association with {ass_id=} has empty <object_list>"))
-        a_a: AttributeAccessItem
-        res = result.List[Parameter]()
-        obj_list_el: ObjectListElement
-        parent_col = cls._get_collection(col.id)
-        root_node = cls._get_root_node(col, cls.DATA_ROOT_TAG)
-        path = cls._get_keep_path(col)
+    def set_data(cls, c: Client) -> result.List[Attr] | result.Error:
+        if c.ldn is None:
+            return result.Error.from_e(ValueError("LDN is absence"))
+        if c._collection is None:
+            return result.Error.from_e(ValueError("collection is absence"))
+        if isinstance(r_obj_list := c._collection.get(c.current_association.object_list, ObjectListType), result.Error):
+            return r_obj_list
+        res = result.List[Attr]()
+        if isinstance(r_par_col := cls._get_collection(c.collection.id), result.Error):
+            return r_par_col
+        par_col = r_par_col.value
+        root_node = cls._get_root_node(c.collection, cls.DATA_ROOT_TAG)
         is_empty: bool = True
-        for obj_list_el in obj_list:
-            obj_par = Parameter(obj_list_el.logical_name.contents)
-            if isinstance(res_col := col.par2obj[ic.COSEMInterfaceClasses](obj_par), result.Error):
-                return res_col.with_msg("collection is wrong")
-            obj = res_col.value
-            if isinstance(res_par_obj := parent_col.par2obj(obj_par), result.Error):
-                return res_par_obj.with_msg("parent collection is wrong")
+        for obj_list_el in r_obj_list.value:
+            if isinstance(r_ic := c.collection.obis2ic(obis := obj_list_el.logical_name.contents), result.Error):
+                return r_ic.with_msg("collection is wrong")
+            obj = r_ic.value
+            if isinstance(r_par_ic := par_col.obis2ic(obis), result.Error):
+                return r_par_ic.with_msg("parent collection is wrong")
             object_node = None
             for a_a in obj_list_el.access_rights.attribute_access:
-                if (i := int(a_a.attribute_id)) == 1:  # skip ln
+                if (
+                    (i := int(a_a.attribute_id)) == 1                                   # skip ln
+                    or (data := c.encodings.get(attr := pack_attr(obis, i))) is None    # skip empthy data
+                    or data == par_col._data.get(attr)                                  # skip according with parrent
+                    or isinstance(r_a_el := obj.getAElement(i), result.Error)           #todo: handle skip Element error
+                    or r_a_el.value.classifier == ic.Classifier.DYNAMIC
+                ):
                     continue
-                try:
-                    if isinstance(a_el := obj.getAEelement(i), result.Error):
-                        """skip"""
-                    if a_el.classifier == ic.Classifier.DYNAMIC:
-                        """skip DYNAMIC attributes"""
-                    elif (attr := obj.get_attr(i)) is None:
-                        """skip empty attributes"""
-                    elif res_par_obj.value.get_attr(i) == attr:
-                        """skip not changed attr value"""
-                    else:
-                        is_empty = False
-                        if object_node is None:
-                            object_node = ET.SubElement(root_node, "object", attrib={"ln": obj.logical_name.get_report().msg})
-                        ET.SubElement(object_node, "attr", attrib={"index": str(i)}).text = attr.encoding.hex()
-                        res.value.append(obj_par.set_i(i))
-                except exc.DLMSException as e:
-                    res.append_e(e)
-        if not is_empty:
-            # TODO: '<!DOCTYPE ITE_util_tree SYSTEM "setting.dtd"> or xsd
-            xml_string = ET.tostring(root_node, encoding="UTF-8", method="xml")
-            with open(path, "wb") as f:
-                f.write(xml_string)
-        else:
-            logger.warning("nothing save. all attributes according with origin collection")
+                is_empty = False
+                if object_node is None:
+                    object_node = ET.SubElement(root_node, "object", attrib={"ln": obis2ln(obis)})
+                ET.SubElement(object_node, "attr", attrib={"index": str(i)}).text = data.hex()
+                res.value.append(attr)
+        if is_empty:
+            return result.Error.from_e(ValueError("all attributes according with origin collection"))
+        # TODO: '<!DOCTYPE ITE_util_tree SYSTEM "setting.dtd"> or xsd
+        xml_string = ET.tostring(root_node, encoding="UTF-8", method="xml")
+        with open(cls._get_keep_path(c.ldn), "wb") as f:
+            f.write(xml_string)
         return res
 
     @staticmethod
@@ -916,17 +871,17 @@ class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
         return new
 
     @classmethod
-    def get_template_node_param(cls, parent: ET.Element, tag: str, value: ParameterValue) -> ET.Element:
+    def get_template_node_param(cls, parent: ET.Element, tag: str, value: AttrData) -> ET.Element:
         if (old := parent.find(tag)) is not None and (old.findtext("value") == value.value.hex()) and (old.findtext("par") == value.par.hex()):
             return old
         else:
-            return cls.parval2node(parent, tag, value)
+            return cls.aData2node(parent, tag, value)
 
     @staticmethod
-    def parval2node(parent: ET.Element, tag: str, value: ParameterValue) -> ET.Element:
+    def aData2node(parent: ET.Element, tag: str, value: AttrData) -> ET.Element:
         new = ET.SubElement(parent, tag)
-        ET.SubElement(new, "par").text = value.par.hex()
-        ET.SubElement(new, "value").text = value.value.hex()
+        ET.SubElement(new, "attr").text = value.attr.hex()
+        ET.SubElement(new, "data").text = value.data.hex()
         return new
 
     @classmethod
@@ -940,10 +895,10 @@ class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
         return r_n
 
     @staticmethod
-    def node2parval(node: ET.Element) -> ParameterValue:
-        return ParameterValue(
-            par=bytes.fromhex(node.findtext("par")),
-            value=bytes.fromhex(node.findtext("value"))
+    def node2aData(node: ET.Element) -> AttrData:
+        return AttrData(
+            attr=bytes.fromhex(node.findtext("attr")),
+            data=bytes.fromhex(node.findtext("data"))
         )
 
     @classmethod
@@ -960,8 +915,8 @@ class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
                     try:
                         cols.append(cls.get_collection(collection.ID(
                             man=bytes.fromhex(man_n.findtext("value")),
-                            f_id=cls.node2parval(fid_n),
-                            f_ver=cls.node2parval(fv_n),
+                            f_id=cls.node2aData(fid_n),
+                            f_ver=cls.node2aData(fv_n),
                         )).unwrap())
                     except AdapterException as e:
                         logger.error(F"collection with: {man_n}/{fid_n}/{fv_n} not load to Template: {e}")
@@ -1028,16 +983,16 @@ class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
             if (country := r_n.findtext("country")) is not None:
                 col.set_country(collection.CountrySpecificIdentifiers(int(country)))
             if (country_ver_el := r_n.find("country_ver")) is not None:
-                col.set_country_ver(cls.node2parval(country_ver_el))
+                col.set_country_ver(cls.node2aData(country_ver_el))
             if all((
                 manufacturer := r_n.findtext("manufacturer"),
                 firm_id_el := r_n.find("firm_id"),
                 firm_ver_el := r_n.find("firm_ver")
             )):
-                col.set_id(collection.ID(
+                col.validate_id(collection.ID(
                     man=bytes.fromhex(manufacturer),
-                    f_id=cls.node2parval(firm_id_el),
-                    f_ver=cls.node2parval(firm_ver_el),
+                    f_id=cls.node2aData(firm_id_el),
+                    f_ver=cls.node2aData(firm_ver_el),
                     sap=client_sap.CONFIGURATOR  # only for Configurator
                 ))
         except ValueError as e:
@@ -1060,7 +1015,7 @@ class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
             semver = SemVer.parse(ver_)
             for v in firm_id.keys():
                 try:
-                    data, _ = cdt.get_instance_and_pdu_from_value(ParameterValue.parse(v).value)
+                    data, _ = cdt.get_instance_and_pdu_from_value(AttrData.parse(v).value)
                     d = data.contents
                 except exc.ITEApplication as e:  # wrong parsing
                     continue
@@ -1117,10 +1072,10 @@ class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
         if col.country is not None:
             ET.SubElement(r_n, "country").text = str(col.country.value)
             if col.country_ver:
-                cls.parval2node(r_n, "country_ver", col.country_ver)
+                cls.aData2node(r_n, "country_ver", col.country_ver)
         ET.SubElement(r_n, "manufacturer").text = col.id.man.hex()
-        cls.parval2node(r_n, "firm_id", col.id.f_id)
-        cls.parval2node(r_n, "firm_ver", col.id.f_ver)
+        cls.aData2node(r_n, "firm_id", col.id.f_id)
+        cls.aData2node(r_n, "firm_ver", col.id.f_ver)
         return r_n
 
     @classmethod
@@ -1137,14 +1092,14 @@ class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
         return ret
 
 
-def attrData2node(parent: ET.Element, tag: str, value: collection.AttrData) -> ET.Element:
+def aData2node(parent: ET.Element, tag: str, value: collection.AttrData) -> ET.Element:
     new = ET.SubElement(parent, tag)
     ET.SubElement(new, "attr").text = value.attr.hex()
     ET.SubElement(new, "data").text = value.data.hex()
     return new
 
 
-def node2attrData(node: ET.Element) -> result.SimpleOrError[collection.AttrData]:
+def node2aData(node: ET.Element) -> result.SimpleOrError[collection.AttrData]:
     if (attr_text := node.findtext("attr")) is None:
         return result.Error.from_e(AttributeError("not find <attr> in node"))
     if (data_text := node.findtext("data")) is None:
@@ -1167,12 +1122,12 @@ class Xml60(Xml50):
         if col.country is not None:
             ET.SubElement(r_n, "country").text = str(col.country.value)
             if col.country_ver:
-                attrData2node(r_n, "country_ver", col.country_ver)
+                aData2node(r_n, "country_ver", col.country_ver)
         ET.SubElement(r_n, "manufacturer").text = col.id.man.hex()
         ET.SubElement(r_n, "SAP").text = str(col.id.sap)
         ET.SubElement(r_n, "association_ver").text = str(col.find_version(class_id.ASSOCIATION_LN))
-        attrData2node(r_n, "firm_id", col.id.f_id)
-        attrData2node(r_n, "firm_ver", col.id.f_ver)
+        aData2node(r_n, "firm_id", col.id.f_id)
+        aData2node(r_n, "firm_ver", col.id.f_ver)
         return r_n
 
     @classmethod
@@ -1200,9 +1155,9 @@ class Xml60(Xml50):
             firm_id_el := r_n.find("firm_id"),
             firm_ver_el := r_n.find("firm_ver")
         )):
-            if isinstance(res_attr_data_id := node2attrData(firm_id_el), result.Error):
+            if isinstance(res_attr_data_id := node2aData(firm_id_el), result.Error):
                 return res_attr_data_id
-            if isinstance(res_attr_data_ver := node2attrData(firm_ver_el), result.Error):
+            if isinstance(res_attr_data_ver := node2aData(firm_ver_el), result.Error):
                 return res_attr_data_ver
             return result.Simple(collection.ID(
                 man=bytes.fromhex(manufacturer),
@@ -1221,13 +1176,14 @@ class Xml60(Xml50):
             if isinstance(res_set_country := col.set_country(collection.CountrySpecificIdentifiers(int(country))), result.Error):
                 return res_set_country
             if (country_ver_el := r_n.find("country_ver")) is not None:
-                if isinstance(res_attr_data := node2attrData(country_ver_el), result.Error):
+                if isinstance(res_attr_data := node2aData(country_ver_el), result.Error):
                     return res_attr_data
                 if isinstance(res_set_country_ver := col.set_country_ver(res_attr_data.value), result.Error):
                     return res_set_country_ver
         if isinstance(res_ID := cls.node2ID(r_n), result.Error):
             return res_ID
-        col.set_id(res_ID.value)
+        if isinstance(r_valid := col.validate_id(res_ID.value), result.Error):
+            return r_valid
         col.spec_map = col.get_spec()
         return result.OK
 

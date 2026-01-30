@@ -1,11 +1,12 @@
 from typing import Protocol, Optional
-from DLMS_SPODES.cosem_interface_classes.parameter import Parameter
+from semver import Version as SemVer
+from StructResult import result
 from DLMS_SPODES.cosem_interface_classes.collection import (
     Collection, ID,
     ParameterValue,
     Template)
-from semver import Version as SemVer
-from StructResult import result
+from DLMS_SPODES.types.type_alias import Attr
+from DLMS_SPODES_client.client import Client
 
 
 type_title: str = "DLMSServerType"
@@ -34,11 +35,11 @@ class Adapter(Protocol):
         """return tree used CollectionID"""
 
     @classmethod
-    def set_data(cls, col: Collection, ass_id: int = 3) -> result.List[Parameter] | result.Error:
+    def set_data(cls, c: Client) -> result.List[Attr] | result.Error:
         """Save attributes WRITABLE and STATIC if possible. Use LDN as ID"""
 
     @classmethod
-    def get_data(cls, col: Collection) -> result.StrictOk | result.Error:
+    def get_data(cls, c: Client) -> result.StrictOk | result.Error:
         """ set attribute values from file by. validation ID's. AdapterException if not find data by ID"""
 
     def set_template(self, template: Template) -> None:
@@ -67,11 +68,11 @@ class __Gag(Adapter):
         raise AdapterException(F"{cls.__name__} not support <get_collection>")
 
     @classmethod
-    def set_data(cls, col: Collection, ass_id: int = 3) -> result.List[Parameter] | result.Error:
+    def set_data(cls, c: Client) -> result.List[Attr] | result.Error:
         raise AdapterException(F"{cls.__name__} not support <keep_data>")
 
     @classmethod
-    def get_data(cls, col: Collection) -> result.Ok | result.Error:
+    def get_data(cls, c: Client) -> result.Ok | result.Error:
         raise AdapterException(F"{cls.__name__} not support <get_data>")
 
     def set_template(self, template: Template) -> None:
