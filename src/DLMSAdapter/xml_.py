@@ -12,9 +12,7 @@ from semver import Version as SemVer
 from StructResult import result
 from DLMS_SPODES.types.implementations import octet_string
 from DLMS_SPODES.types.type_alias import Obis, ln2obis, pack_attr, Index, Tag, unpack_attr, attr2obis, obis2ln, Attr
-from DLMS_SPODES.cosem_interface_classes.parameter import Parameter
 from DLMS_SPODES.types import cst, cdt, ut
-from DLMS_SPODES.cosem_interface_classes.obis import OBIS
 from DLMS_SPODES.cosem_interface_classes.Overview import class_id
 from DLMS_SPODES.cosem_interface_classes.collection import Collection, AssociationLN, Template, ID, AttrData
 from DLMS_SPODES.cosem_interface_classes.association_ln.ver0 import ObjectListElement, AttributeAccessItem, AccessMode
@@ -23,6 +21,7 @@ from DLMS_SPODES.cosem_interface_classes.association_ln.abstract import ObjectLi
 from DLMS_SPODES import exceptions as exc
 from DLMS_SPODES_client.client import Client
 from .main import Adapter, AdapterException
+
 
 logger = logging.getLogger(__name__)
 man6 = re.compile("([a-f, 0-9]{2}){3}")
