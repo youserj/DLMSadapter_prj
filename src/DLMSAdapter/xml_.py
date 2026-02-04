@@ -824,7 +824,7 @@ class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin1, Base):
             return result.Error.from_e(ValueError("LDN is absence"))
         if c._collection is None:
             return result.Error.from_e(ValueError("collection is absence"))
-        if isinstance(r_obj_list := c._collection.get(c.current_association.object_list, ObjectListType), result.Error):
+        if isinstance(r_obj_list := c.getObjectList(), result.Error):
             return r_obj_list
         res = result.List[Attr]()
         if isinstance(r_par_col := cls._get_collection(c.collection.id), result.Error):
