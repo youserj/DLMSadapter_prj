@@ -1139,15 +1139,14 @@ class Xml50(__GetCollectionIDMixin1, __SetTemplateMixin2, Base):
         root_node = cls._get_root_node(col, Xml50.TYPE_ROOT_TAG)
         objs: dict[cst.LogicalName, set[int]] = dict()
         """key: LN, value: not writable and readable container"""
-        reduce_ln = collection.ln_pattern.LNPattern.parse("0.0.(40,42).0.0.255")
+        reduce_ln = collection.ln_pattern.LNPattern.parse("0.0.42.0.0.255")
         ass: AssociationLN
         access: AttributeAccessItem
         for ass in col.iter_classID_objects(ClassID.ASSOCIATION_LN):
             if ass.object_list is None:
                 logger.warning(F"for {ass} got empty <object_list>. skip it")
                 continue
-            else:
-                objs[ass.logical_name] = {2}  # always keep <object_list>
+            objs[ass.logical_name] = {2}  # always keep <object_list>
             for obj_el in ass.object_list:
                 if reduce_ln == obj_el.logical_name:
                     """skip LDN and current_association"""
